@@ -1,9 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-     <!-- 添加安全头 -->
-    <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
-    <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>视频压缩工具</title>
@@ -11,9 +8,9 @@
     <!-- 添加样式库 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     
-    <!-- 添加 FFmpeg WASM -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js"></script>
+    <!-- 更新 FFmpeg 引用 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.9.8/dist/ffmpeg.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.9.8/dist/ffmpeg-core.js"></script>
     
     <style>
         body {
@@ -96,18 +93,6 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .log-container {
-            margin-top: 20px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            max-height: 200px;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 12px;
-            display: none;
-        }
     </style>
 </head>
 <body>
@@ -161,8 +146,6 @@
         <div class="progress mt-3" style="display: none;">
             <div class="progress-bar" role="progressbar" style="width: 0%"></div>
         </div>
-
-        <div class="log-container" id="logContainer"></div>
     </div>
 
     <div class="loading-overlay">
@@ -173,13 +156,7 @@
         const { createFFmpeg, fetchFile } = FFmpeg;
         const ffmpeg = createFFmpeg({ 
             log: true,
-            progress: ({ ratio }) => {
-                if (ratio >= 0) {
-                    const percent = Math.round(ratio * 100);
-                    progressBar.style.width = `${percent}%`;
-                    progressBar.textContent = `${percent}%`;
-                }
-            }
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.9.8/dist/ffmpeg-core.js'
         });
 
         const uploadArea = document.getElementById('uploadArea');
@@ -193,7 +170,6 @@
         const compressionOptions = document.querySelector('.compression-options');
         const previewContainer = document.querySelector('.preview-container');
         const loadingOverlay = document.querySelector('.loading-overlay');
-        const logContainer = document.getElementById('logContainer');
 
         let videoFile = null;
         let compressedBlob = null;
@@ -268,7 +244,6 @@
 
                 progress.style.display = 'block';
                 compressBtn.disabled = true;
-                logContainer.style.display = 'block';
                 
                 const quality = document.getElementById('quality').value;
                 const resolution = document.getElementById('resolution').value;
@@ -355,10 +330,13 @@
             return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
         }
 
-        // 添加日志显示
-        ffmpeg.setLogger(({ message }) => {
-            logContainer.textContent += message + '\n';
-            logContainer.scrollTop = logContainer.scrollHeight;
+        // 添加进度显示
+        ffmpeg.setProgress(({ ratio }) => {
+            if (ratio >= 0) {
+                const percent = Math.round(ratio * 100);
+                progressBar.style.width = `${percent}%`;
+                progressBar.textContent = `${percent}%`;
+            }
         });
     </script>
 </body>
