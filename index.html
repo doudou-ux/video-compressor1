@@ -59,12 +59,37 @@
             border-radius: 8px;
         }
 
+        .progress-container {
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .progress {
+            height: 25px;
+        }
+
         .progress-bar {
             transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .cancel-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 10;
+            display: none;
         }
 
         #downloadBtn {
             display: none;
+        }
+
+        .status-text {
+            margin-top: 10px;
+            color: #6c757d;
+            font-size: 0.9em;
         }
 
         .loading-overlay {
@@ -80,6 +105,13 @@
             z-index: 1000;
         }
 
+        .loading-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
         .loading-spinner {
             width: 50px;
             height: 50px;
@@ -87,11 +119,22 @@
             border-top: 5px solid #3498db;
             border-radius: 50%;
             animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
         }
 
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: none;
         }
     </style>
 </head>
@@ -108,6 +151,8 @@
                 <li>输出格式：MP4</li>
             </ul>
         </div>
+
+        <div class="error-message" id="errorMessage"></div>
 
         <div class="upload-area" id="uploadArea">
             <h4>点击或拖拽视频文件到这里</h4>
@@ -143,20 +188,35 @@
         <button id="compressBtn" class="btn btn-primary w-100" style="display: none;">开始压缩</button>
         <button id="downloadBtn" class="btn btn-success w-100">下载压缩后的视频</button>
 
-        <div class="progress mt-3" style="display: none;">
-            <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+        <div class="progress-container" style="display: none;">
+            <div class="progress">
+                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+            </div>
+            <button class="btn btn-sm btn-danger cancel-btn" id="cancelBtn">取消</button>
+            <div class="status-text" id="statusText">正在初始化...</div>
         </div>
     </div>
 
     <div class="loading-overlay">
-        <div class="loading-spinner"></div>
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div id="loadingText">正在加载处理引擎...</div>
+        </div>
     </div>
 
     <script>
         const { createFFmpeg, fetchFile } = FFmpeg;
         const ffmpeg = createFFmpeg({ 
             log: true,
-            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.9.8/dist/ffmpeg-core.js'
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.9.8/dist/ffmpeg-core.js',
+            progress: ({ ratio }) => {
+                if (ratio >= 0) {
+                    const percent = Math.round(ratio * 100);
+                    progressBar.style.width = `${percent}%`;
+                    progressBar.textContent = `${percent}%`;
+                    statusText.textContent = `正在压缩：${percent}%`;
+                }
+            }
         });
 
         const uploadArea = document.getElementById('uploadArea');
@@ -166,13 +226,18 @@
         const compressBtn = document.getElementById('compressBtn');
         const downloadBtn = document.getElementById('downloadBtn');
         const progressBar = document.querySelector('.progress-bar');
-        const progress = document.querySelector('.progress');
+        const progressContainer = document.querySelector('.progress-container');
         const compressionOptions = document.querySelector('.compression-options');
         const previewContainer = document.querySelector('.preview-container');
         const loadingOverlay = document.querySelector('.loading-overlay');
+        const loadingText = document.getElementById('loadingText');
+        const statusText = document.getElementById('statusText');
+        const errorMessage = document.getElementById('errorMessage');
+        const cancelBtn = document.getElementById('cancelBtn');
 
         let videoFile = null;
         let compressedBlob = null;
+        let isCompressing = false;
 
         // 处理文件拖放
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -199,12 +264,25 @@
             handleFiles(files);
         }
 
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
         function handleFiles(files) {
             if (files.length === 0) return;
             
             videoFile = files[0];
             if (!videoFile.type.startsWith('video/')) {
-                alert('请选择视频文件！');
+                showError('请选择视频文件！');
+                return;
+            }
+
+            if (videoFile.size > 2 * 1024 * 1024 * 1024) {
+                showError('文件大小不能超过2GB！');
                 return;
             }
 
@@ -215,6 +293,7 @@
             compressionOptions.style.display = 'block';
             compressBtn.style.display = 'block';
             downloadBtn.style.display = 'none';
+            errorMessage.style.display = 'none';
 
             // 获取视频信息
             previewVideo.onloadedmetadata = () => {
@@ -232,18 +311,24 @@
         }
 
         compressBtn.addEventListener('click', async () => {
-            if (!videoFile) return;
+            if (!videoFile || isCompressing) return;
 
             try {
+                isCompressing = true;
+                errorMessage.style.display = 'none';
+                
                 // 加载 FFmpeg
                 if (!ffmpeg.isLoaded()) {
                     loadingOverlay.style.display = 'flex';
+                    loadingText.textContent = '正在加载处理引擎...';
                     await ffmpeg.load();
                     loadingOverlay.style.display = 'none';
                 }
 
-                progress.style.display = 'block';
+                progressContainer.style.display = 'block';
+                cancelBtn.style.display = 'block';
                 compressBtn.disabled = true;
+                statusText.textContent = '正在准备压缩...';
                 
                 const quality = document.getElementById('quality').value;
                 const resolution = document.getElementById('resolution').value;
@@ -254,6 +339,7 @@
                 const scale = resolution === 'original' ? '' : `-vf scale=-2:${resolution}`;
 
                 // 写入文件到 FFmpeg 虚拟文件系统
+                statusText.textContent = '正在处理文件...';
                 ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(videoFile));
 
                 // 构建 FFmpeg 命令
@@ -275,9 +361,11 @@
                 );
 
                 // 执行压缩
+                statusText.textContent = '正在压缩...';
                 await ffmpeg.run(...args);
 
                 // 读取压缩后的文件
+                statusText.textContent = '正在生成压缩后的文件...';
                 const data = ffmpeg.FS('readFile', 'output.mp4');
                 compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
 
@@ -300,13 +388,26 @@
                 `;
 
                 downloadBtn.style.display = 'block';
+                statusText.textContent = '压缩完成！';
 
             } catch (error) {
-                alert('压缩过程中出错：' + error.message);
+                showError('压缩过程中出错：' + error.message);
+                statusText.textContent = '压缩失败';
             } finally {
+                isCompressing = false;
                 compressBtn.disabled = false;
-                progress.style.display = 'none';
-                loadingOverlay.style.display = 'none';
+                cancelBtn.style.display = 'none';
+            }
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            if (isCompressing) {
+                ffmpeg.exit();
+                isCompressing = false;
+                compressBtn.disabled = false;
+                progressContainer.style.display = 'none';
+                statusText.textContent = '已取消压缩';
+                showError('压缩已取消');
             }
         });
 
@@ -329,15 +430,6 @@
             const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
             return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
         }
-
-        // 添加进度显示
-        ffmpeg.setProgress(({ ratio }) => {
-            if (ratio >= 0) {
-                const percent = Math.round(ratio * 100);
-                progressBar.style.width = `${percent}%`;
-                progressBar.textContent = `${percent}%`;
-            }
-        });
     </script>
 </body>
 </html>
