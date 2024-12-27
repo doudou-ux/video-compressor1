@@ -3,14 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
+    <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
     <title>视频压缩工具</title>
     
     <!-- 添加样式库 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
     
     <!-- 更新 FFmpeg 引用 -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.0/dist/ffmpeg.min.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.9.8/dist/ffmpeg.min.js"></script>
     
     <style>
         body {
@@ -35,11 +37,17 @@
             margin: 20px 0;
             cursor: pointer;
             transition: all 0.3s ease;
+            background-color: #fff;
         }
 
         .upload-area:hover {
             border-color: #0d6efd;
             background-color: #f8f9fa;
+        }
+
+        .upload-area.drag-over {
+            border-color: #0d6efd;
+            background-color: #e9ecef;
         }
 
         .preview-container {
@@ -136,6 +144,12 @@
             margin: 10px 0;
             display: none;
         }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #6c757d;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -155,7 +169,9 @@
         <div class="error-message" id="errorMessage"></div>
 
         <div class="upload-area" id="uploadArea">
+            <i class="fas fa-cloud-upload-alt upload-icon"></i>
             <h4>点击或拖拽视频文件到这里</h4>
+            <p class="text-muted">支持的格式：MP4, MOV, AVI, MKV</p>
             <input type="file" id="fileInput" accept="video/*" style="display: none;">
         </div>
 
@@ -208,30 +224,10 @@
         const { createFFmpeg, fetchFile } = FFmpeg;
         const ffmpeg = createFFmpeg({ 
             log: true,
-            corePath: 'https://unpkg.com/@ffmpeg/core@0.10.0/dist/ffmpeg-core.js',
-            progress: ({ ratio }) => {
-                if (ratio >= 0) {
-                    const percent = Math.round(ratio * 100);
-                    progressBar.style.width = `${percent}%`;
-                    progressBar.textContent = `${percent}%`;
-                    statusText.textContent = `正在压缩：${percent}%`;
-                }
-            }
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.9.8/dist/ffmpeg-core.js'
         });
 
-        // 添加错误处理
-        window.onerror = function(msg, url, lineNo, columnNo, error) {
-            showError('发生错误：' + msg);
-            loadingOverlay.style.display = 'none';
-            return false;
-        };
-
-        // 添加未处理的 Promise 错误处理
-        window.addEventListener('unhandledrejection', function(event) {
-            showError('加载失败：' + event.reason);
-            loadingOverlay.style.display = 'none';
-        });
-
+        // 获取所有需要的DOM元素
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const previewVideo = document.getElementById('previewVideo');
@@ -252,19 +248,42 @@
         let compressedBlob = null;
         let isCompressing = false;
 
-        // 处理文件拖放
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            uploadArea.addEventListener(eventName, preventDefaults, false);
-        });
+        // 初始化上传区域
+        function initializeUploadArea() {
+            uploadArea.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                fileInput.click();
+            });
+
+            uploadArea.addEventListener('dragenter', function(e) {
+                preventDefaults(e);
+                this.classList.add('drag-over');
+            });
+
+            uploadArea.addEventListener('dragleave', function(e) {
+                preventDefaults(e);
+                this.classList.remove('drag-over');
+            });
+
+            uploadArea.addEventListener('dragover', function(e) {
+                preventDefaults(e);
+                this.classList.add('drag-over');
+            });
+
+            uploadArea.addEventListener('drop', function(e) {
+                preventDefaults(e);
+                this.classList.remove('drag-over');
+                handleDrop(e);
+            });
+
+            fileInput.addEventListener('change', handleFileSelect);
+        }
 
         function preventDefaults(e) {
             e.preventDefault();
             e.stopPropagation();
         }
-
-        uploadArea.addEventListener('drop', handleDrop);
-        uploadArea.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', handleFileSelect);
 
         function handleDrop(e) {
             const dt = e.dataTransfer;
@@ -443,6 +462,36 @@
             const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
             return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
         }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeUploadArea();
+            
+            // 预加载 FFmpeg
+            loadingOverlay.style.display = 'flex';
+            loadingText.textContent = '正在初始化...';
+            
+            ffmpeg.load().then(() => {
+                loadingOverlay.style.display = 'none';
+                showError('初始化完成，可以开始使用了');
+            }).catch(err => {
+                loadingOverlay.style.display = 'none';
+                showError('初始化失败：' + err.message);
+            });
+        });
+
+        // 添加错误处理
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            showError('发生错误：' + msg);
+            loadingOverlay.style.display = 'none';
+            return false;
+        };
+
+        // 添加未处理的 Promise 错误处理
+        window.addEventListener('unhandledrejection', function(event) {
+            showError('加载失败：' + event.reason);
+            loadingOverlay.style.display = 'none';
+        });
     </script>
 </body>
 </html>
