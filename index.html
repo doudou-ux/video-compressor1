@@ -8,6 +8,10 @@
     <!-- 添加样式库 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     
+    <!-- 添加 FFmpeg WASM -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js"></script>
+    
     <style>
         body {
             background-color: #f8f9fa;
@@ -45,6 +49,7 @@
         .preview-video {
             max-width: 100%;
             border-radius: 8px;
+            background-color: #000;
         }
 
         .file-info {
@@ -61,6 +66,45 @@
         #downloadBtn {
             display: none;
         }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .log-container {
+            margin-top: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -70,9 +114,10 @@
         <div class="alert alert-info">
             <h5>使用说明：</h5>
             <ul>
-                <li>支持的格式：MP4, WebM</li>
-                <li>建议视频大小：不超过500MB</li>
-                <li>压缩比例：约可减小40-60%体积</li>
+                <li>支持的格式：MP4, MOV, AVI, MKV等常见格式</li>
+                <li>建议视频大小：不超过2GB</li>
+                <li>压缩比例：约可减小50-80%体积</li>
+                <li>输出格式：MP4</li>
             </ul>
         </div>
 
@@ -113,9 +158,27 @@
         <div class="progress mt-3" style="display: none;">
             <div class="progress-bar" role="progressbar" style="width: 0%"></div>
         </div>
+
+        <div class="log-container" id="logContainer"></div>
+    </div>
+
+    <div class="loading-overlay">
+        <div class="loading-spinner"></div>
     </div>
 
     <script>
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ 
+            log: true,
+            progress: ({ ratio }) => {
+                if (ratio >= 0) {
+                    const percent = Math.round(ratio * 100);
+                    progressBar.style.width = `${percent}%`;
+                    progressBar.textContent = `${percent}%`;
+                }
+            }
+        });
+
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const previewVideo = document.getElementById('previewVideo');
@@ -126,6 +189,8 @@
         const progress = document.querySelector('.progress');
         const compressionOptions = document.querySelector('.compression-options');
         const previewContainer = document.querySelector('.preview-container');
+        const loadingOverlay = document.querySelector('.loading-overlay');
+        const logContainer = document.getElementById('logContainer');
 
         let videoFile = null;
         let compressedBlob = null;
@@ -191,65 +256,79 @@
             if (!videoFile) return;
 
             try {
+                // 加载 FFmpeg
+                if (!ffmpeg.isLoaded()) {
+                    loadingOverlay.style.display = 'flex';
+                    await ffmpeg.load();
+                    loadingOverlay.style.display = 'none';
+                }
+
                 progress.style.display = 'block';
                 compressBtn.disabled = true;
+                logContainer.style.display = 'block';
                 
                 const quality = document.getElementById('quality').value;
                 const resolution = document.getElementById('resolution').value;
-                
-                // 创建 MediaRecorder
-                const stream = previewVideo.captureStream();
-                const mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'video/webm;codecs=vp8',
-                    videoBitsPerSecond: getVideoBitrate(quality)
-                });
 
-                const chunks = [];
-                mediaRecorder.ondataavailable = e => chunks.push(e.data);
-                mediaRecorder.onstop = async () => {
-                    compressedBlob = new Blob(chunks, { type: 'video/webm' });
-                    downloadBtn.style.display = 'block';
-                    compressBtn.disabled = false;
-                    progress.style.display = 'none';
-                    
-                    // 显示压缩结果
-                    const compressionRatio = ((1 - compressedBlob.size / videoFile.size) * 100).toFixed(1);
-                    fileInfo.innerHTML += `
-                        <p class="text-success">
-                            <strong>压缩后大小：</strong>${formatSize(compressedBlob.size)}
-                            <br>
-                            <strong>压缩率：</strong>${compressionRatio}%
-                        </p>
-                    `;
-                };
+                // 设置压缩参数
+                const crf = quality === 'high' ? '23' : quality === 'medium' ? '28' : '32';
+                const preset = quality === 'high' ? 'slow' : quality === 'medium' ? 'medium' : 'faster';
+                const scale = resolution === 'original' ? '' : `-vf scale=-2:${resolution}`;
 
-                // 开始录制
-                mediaRecorder.start(1000);
-                previewVideo.currentTime = 0;
-                previewVideo.play();
+                // 写入文件到 FFmpeg 虚拟文件系统
+                ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(videoFile));
 
-                // 更新进度
-                const updateProgress = () => {
-                    const progress = (previewVideo.currentTime / previewVideo.duration) * 100;
-                    progressBar.style.width = `${progress}%`;
-                    progressBar.textContent = `${Math.round(progress)}%`;
-                    
-                    if (previewVideo.currentTime < previewVideo.duration) {
-                        requestAnimationFrame(updateProgress);
-                    }
-                };
-                updateProgress();
+                // 构建 FFmpeg 命令
+                const args = [
+                    '-i', 'input.mp4',
+                    '-c:v', 'libx264',
+                    '-crf', crf,
+                    '-preset', preset
+                ];
 
-                // 视频播放结束时停止录制
-                previewVideo.onended = () => {
-                    mediaRecorder.stop();
-                    previewVideo.pause();
-                };
+                if (scale) {
+                    args.push('-vf', `scale=-2:${resolution}`);
+                }
+
+                args.push(
+                    '-c:a', 'aac',
+                    '-b:a', '128k',
+                    'output.mp4'
+                );
+
+                // 执行压缩
+                await ffmpeg.run(...args);
+
+                // 读取压缩后的文件
+                const data = ffmpeg.FS('readFile', 'output.mp4');
+                compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
+
+                // 清理文件系统
+                ffmpeg.FS('unlink', 'input.mp4');
+                ffmpeg.FS('unlink', 'output.mp4');
+
+                // 更新预览
+                const url = URL.createObjectURL(compressedBlob);
+                previewVideo.src = url;
+
+                // 显示压缩结果
+                const compressionRatio = ((1 - compressedBlob.size / videoFile.size) * 100).toFixed(1);
+                fileInfo.innerHTML += `
+                    <p class="text-success">
+                        <strong>压缩后大小：</strong>${formatSize(compressedBlob.size)}
+                        <br>
+                        <strong>压缩率：</strong>${compressionRatio}%
+                    </p>
+                `;
+
+                downloadBtn.style.display = 'block';
 
             } catch (error) {
                 alert('压缩过程中出错：' + error.message);
+            } finally {
                 compressBtn.disabled = false;
                 progress.style.display = 'none';
+                loadingOverlay.style.display = 'none';
             }
         });
 
@@ -259,7 +338,7 @@
             const url = URL.createObjectURL(compressedBlob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `compressed_${videoFile.name.split('.')[0]}.webm`;
+            a.download = `compressed_${videoFile.name.split('.')[0]}.mp4`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -273,14 +352,11 @@
             return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
         }
 
-        function getVideoBitrate(quality) {
-            switch (quality) {
-                case 'high': return 8000000; // 8 Mbps
-                case 'medium': return 4000000; // 4 Mbps
-                case 'low': return 2000000; // 2 Mbps
-                default: return 4000000;
-            }
-        }
+        // 添加日志显示
+        ffmpeg.setLogger(({ message }) => {
+            logContainer.textContent += message + '\n';
+            logContainer.scrollTop = logContainer.scrollHeight;
+        });
     </script>
 </body>
 </html>
